@@ -1,3 +1,4 @@
+from structure_tensor import eig_special_3d, structure_tensor_3d
 import numpy as np
 import collections
 import heapq
@@ -164,7 +165,7 @@ class Supervoxel:
 
         # add intersection pixels to self.coods
         self.mother.coods.update(intersected)
-        voxelsz = len(self.mother.coods)
+        voxelsz = len(self.mother.getCoods()) + len(temp)
         for ob in self.mother.contain:
             ob.boundary = temp
             ob.size = voxelsz
@@ -228,7 +229,7 @@ class Supervoxel:
 # 2. max intensity / voxel count <- NOT A GOOD APPROACH. (x)
 # 3. ? SA ?
 #
-def boundaryIntensity(bd1,bd2,featuremap,dim=3, mode='avg'):
+def boundaryIntensity(bdpixels,featuremap,dim=3, mode='avg'):
     '''
 
     :param bd1: supervoxel 1's boundary pixels
@@ -239,7 +240,6 @@ def boundaryIntensity(bd1,bd2,featuremap,dim=3, mode='avg'):
     :return: return the boundary intensities mark
     '''
 
-    bdpixels = bd1.intersection(bd2)
     totalIntensity = 0 # for metric 1
     voxelcounts = 0 # for metric 226 ne
     for idx in bdpixels:
@@ -256,7 +256,7 @@ def boundaryIntensity(bd1,bd2,featuremap,dim=3, mode='avg'):
                     # metric 1
                     totalIntensity+=intensity
                     voxelcounts+=1
-    return (totalIntensity/voxelcounts),len(bdpixels)
+    return (totalIntensity/voxelcounts)
 
 
 
@@ -278,7 +278,7 @@ def manhattan(x, y, a=20, b=1, c=10):
     return a * abs(x1 - x2)**2 + b * abs(y1 - y2) + c * abs(z1 - z2)
 
 
-def priorityQueueMerge(L,SAthres=100):
+def priorityQueueMerge(L,SAthres=80):
     '''
 
     :param iter: iteration to stop
@@ -296,14 +296,15 @@ def priorityQueueMerge(L,SAthres=100):
     for vid in visited.keys():
         for nbr in L[vid].getAdjList():  # Here we can either uses smallest edge weight, or PriorityQueue()
             if (vid > nbr.id): continue
-            edwt,bdsz = boundaryIntensity(L[vid].boundary, nbr.boundary, Supervoxel.featuremap)
-            if bdsz < SAthres : continue
+            bdpixels = L[vid].boundary.intersection(nbr.boundary)
+            if len(bdpixels) < SAthres: continue
+            edwt = boundaryIntensity(bdpixels, Supervoxel.featuremap)
             minqueue.push(edwt,frozenset((L[vid],nbr)))
 
     #Parameters for tuning:
-    totalstep = 3000
+    totalstep = 4000
     saveiteration = 500
-    maxmyocyte = 100000 # 125000 or 250000
+    maxmyocyte = 250000 # 125000 or 250000
     kk = 0
     #SAthres
     while minqueue.size()>0:
@@ -313,26 +314,28 @@ def priorityQueueMerge(L,SAthres=100):
         v1,v2 = pair[0],pair[1] #unpack supervoxel
         if visited[v1.id] or visited[v2.id]: continue #continuemayebe don't need to check label
         if (v1.size+v2.size) > maxmyocyte: continue
+        if (v1.size+v2.size) > 150000 and edwt > 0.55: continue
 
         # MODIFY: We can also check some condition here before merge
         ids = v1.merge(v2)
         #mark visited
         for i in ids:
             visited[i] = True
-
         #Add all nbrs of the new merged supervoxel to minqueue.
         newvoxel = L[v1.label]
         uniqueIds.add(v1.label)
         for nbr in newvoxel.getAdjList():
             if visited[nbr.id] or visited[nbr.label]: continue
-            edwt,bdsz = boundaryIntensity(newvoxel.boundary, nbr.boundary, Supervoxel.featuremap)
-            if bdsz < SAthres: continue
+            bdpixels = newvoxel.boundary.intersection(nbr.boundary)
+            if len(bdpixels) < SAthres: continue
+            edwt = boundaryIntensity(bdpixels, Supervoxel.featuremap)
             minqueue.push(edwt,frozenset((newvoxel,nbr)))
 
         kk+=1
+
         if saveiteration and ((kk % saveiteration) == 0 ):
             # save merged turbopixel at each iteration
-            Supervoxel.writeIntermediateV(uniqueIds, f'{kk}.tif')
+            #Supervoxel.writeIntermediateV(uniqueIds, f'{kk}.tif')
             uniqueIds = set([]) #update list
 
     print(kk)
@@ -366,9 +369,9 @@ def merging(L, iter, threshold, intermediate=False):
             for nbr in L[vid].getAdjList(): #Here we can either uses smallest edge weight, or PriorityQueue()
                 if nbr.id < vid: continue # avoid adding repeated edge
                 if visited[nbr.id] or visited[nbr.label]: continue
-                edgeweight,bdsz = boundaryIntensity(L[vid].boundary, nbr.boundary,Supervoxel.featuremap,dim=0)  # manhattan(L[vid].centroid, nbr.centroid) # TWEAK replace with other metric
-                if edgeweight>threshold: continue
-
+                bdpixels = L[vid].boundary.intersection(nbr.boundary)
+                if len(bdpixels)<threshold: continue
+                edgeweight = boundaryIntensity(bdpixels,Supervoxel.featuremap,dim=0)  # manhattan(L[vid].centroid, nbr.centroid) # TWEAK replace with other metric
                 minedgeweight = min(edgeweight,minedgeweight) #or TWEAK: take the smallest centroid or closet centroid + inten
                 if edgeweight == minedgeweight: #OR manhattan distance threshold
                     minNBR = nbr
@@ -482,11 +485,79 @@ def loadObj(fn):
 def nbrhood(dim=3):
     return np.full((3, 3, 3), 1.0/(dim**3),dtype=np.float64)
 
+
+
+def writeOrientation(img, sigma=3, rho = 80, gap = 10, fn = './orien.tif'):
+    '''
+    :param img: raw or feature map for structure tensor calculation
+    :param sigma: noise level
+    :param rho: nbrhood size
+    :param gap: discretized step sizes.
+    :return: None
+
+    Write structure tensor's largest eigenvector as new Tiff image.
+    '''
+    #structure tensor
+    S = structure_tensor_3d(img.astype(np.float64), sigma, rho)
+    val, vec = eig_special_3d(S)
+    x_limit, y_limit, z_limit = img.shape
+
+    def helper(center, direction, t=gap*2):
+        """ Return the coordinates of a line segment drawn with:
+             <x,y,z> = <center_x,center_y,center_z> + t * <direction_x, direction_y, direction_z>
+            and t varies from (-t // 2, t // 2) and lies within sizelimit (sizelimit_x,sizelimit_y,sizelimit_z)
+        Parameters
+        ----------
+        center:  <center_x,center_y,center_z>, 3d vector, middle of line segment
+        direction: <direction_x, direction_y, direction_z>, 3d vector, slope of line
+        sizelimit: 3d vector, canvas size limit
+        t: line parametrized in t, drawn with (-t // 2, t // 2)
+        Returns
+        -------
+        coods[:,0]: coordinates x component
+        coods[:,1]: coordinates y component
+        coods[:,2]: coordinates z component
+        """
+        x_limit, y_limit, z_limit = img.shape
+        cooods = []
+        for i in range(-t // 2, t // 2, 1):
+            x_new, y_new, z_new = np.array(center) + np.array(direction) * i
+            x_new, y_new, z_new = round(x_new), round(y_new), round(z_new)
+            allowz = (z_new >= 0 and z_new < z_limit)
+            if x_new >= 0 and x_new < x_limit and y_new >= 0 and y_new < y_limit and allowz:
+                cooods.append([x_new, y_new, z_new])
+                if y_new + 1 < y_limit and [x_new, y_new + 1, z_new] not in cooods:
+                    cooods.append([x_new, y_new + 1, z_new])
+                if y_new - 1 >= 0 and [x_new, y_new - 1, z_new] not in cooods:
+                    cooods.append([x_new, y_new - 1, z_new])
+                if x_new + 1 < x_limit and [x_new + 1, y_new, z_new] not in cooods:
+                    cooods.append([x_new + 1, y_new, z_new])
+                if x_new - 1 >= 0 and [x_new - 1, y_new, z_new] not in cooods:
+                    cooods.append([x_new - 1, y_new, z_new])
+        cooods = np.array(cooods)
+        return cooods[:, 0], cooods[:, 1], cooods[:, 2]
+
+    for i in range(gap,x_limit,1):
+        for j in range(gap,y_limit,2*gap):
+            for k in range(gap, z_limit, 2*gap):
+                print(i,j,k)
+                x,y,z = vec[:,i,j,k]
+                img[helper([i,j,k],[z,y,x],10)] = 4000
+    tifffile.imwrite(fn,img,photometric='minisblack')
+
+
 if __name__ == "__main__":
+
+    #rot = tifffile.imread('/Users/yananw/Desktop/featuremap/19B3s1LV/031.tif')
+    #writeOrientation(rot,2,60,16,fn='./031Ori.tif') #2,80,16
+
+
     # supervoxel img
     img = tifffile.imread("/Users/yananw/Desktop/supervoxels/031.tif")
     volume = img #[0:30, :, :]
     voxelthres = 3
+
+
 
     stats = cc3d.statistics(volume)  # bounding_boxes, voxel_counts, centroids
     edges = cc3d.region_graph(volume, connectivity=18)
@@ -522,7 +593,7 @@ if __name__ == "__main__":
     # Stores SupervoxelList as class attribute:
     Supervoxel.allvoxels = SupervoxelList
     Supervoxel.shape = volume.shape
-    #Supervoxel.rawimage = tifffile.imread('/Users/yananw/Desktop/highResolutionMyocytes/19B3s1LV/wga/031.tif')
+    Supervoxel.rawimage = tifffile.imread('/Users/yananw/Desktop/highResolutionMyocytes/19B3s1LV/wga/031.tif')
     Supervoxel.featuremap = tifffile.imread('/Users/yananw/Desktop/featuremap/19B3s1LV/031.tif')
 
     #starts merging
