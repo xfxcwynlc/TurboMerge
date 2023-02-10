@@ -6,6 +6,24 @@ import pickle
 import cc3d
 import math
 
+# unique priority queue
+class PrioritySet(object):
+    def __init__(self):
+        self.heap = []
+        self.set = set([])
+
+    def push(self, pri, pair):
+        if pair not in self.set:
+            heapq.heappush(self.heap, (pri, pair))
+            self.set.add(pair)
+
+    def pop(self):
+        pri, pair = heapq.heappop(self.heap)
+        self.set.remove(pair)
+        return pri,list(pair)
+
+    def size(self):
+        return len(self.set)
 
 class Supervoxel:
     allvoxels = None
@@ -59,15 +77,15 @@ class Supervoxel:
                     seen.add(l.label)
 
         else:
-            for l in Supervoxel.allvoxels:
-                if Supervoxel.allvoxels[l].label not in seen:
+            for key,voxel in Supervoxel.allvoxels.items():
+                if voxel.label not in seen:
                     #add coods
-                    for idx in Supervoxel.allvoxels[l.label].getCoods():
-                        v[idx] = l.label
+                    for idx in Supervoxel.allvoxels[voxel.label].getCoods():
+                        v[idx] = voxel.label
                     #add boundary
-                    for idx in Supervoxel.allvoxels[l.label].boundary:
-                        v[idx] = l.label
-                    seen.add(l.label)
+                    for idx in Supervoxel.allvoxels[voxel.label].boundary:
+                        v[idx] = voxel.label
+                    seen.add(voxel.label)
 
         tifffile.imwrite('./intermediatemerged.tif',v,photometric='minisblack')
 
@@ -238,7 +256,7 @@ def boundaryIntensity(bd1,bd2,featuremap,dim=3, mode='avg'):
                     # metric 1
                     totalIntensity+=intensity
                     voxelcounts+=1
-    return round(totalIntensity/voxelcounts,4),len(bdpixels)
+    return (totalIntensity/voxelcounts),len(bdpixels)
 
 
 
@@ -260,7 +278,7 @@ def manhattan(x, y, a=20, b=1, c=10):
     return a * abs(x1 - x2)**2 + b * abs(y1 - y2) + c * abs(z1 - z2)
 
 
-def priorityQueueMerge(L,SAthres=300):
+def priorityQueueMerge(L,SAthres=100):
     '''
 
     :param iter: iteration to stop
@@ -273,25 +291,27 @@ def priorityQueueMerge(L,SAthres=300):
         visited[k] = False
 
     #initialize min heap
-    minqueue = []
+    minqueue = PrioritySet()
     uniqueIds = set([])
     for vid in visited.keys():
         for nbr in L[vid].getAdjList():  # Here we can either uses smallest edge weight, or PriorityQueue()
             if (vid > nbr.id): continue
             edwt,bdsz = boundaryIntensity(L[vid].boundary, nbr.boundary, Supervoxel.featuremap)
             if bdsz < SAthres : continue
-            heapq.heappush(minqueue,(edwt,(L[vid],nbr)) )
+            minqueue.push(edwt,frozenset((L[vid],nbr)))
 
     #Parameters for tuning:
-    totalstep = 2000
+    totalstep = 3000
     saveiteration = 500
     maxmyocyte = 100000 # 125000 or 250000
     kk = 0
     #SAthres
-    while kk < totalstep and minqueue:
-        edwt,pair = heapq.heappop()
+    while minqueue.size()>0:
+        if kk > totalstep:
+            break
+        edwt,pair = minqueue.pop()
         v1,v2 = pair[0],pair[1] #unpack supervoxel
-        if visited[v1.id] or visited[v2.id] or visited[v1.label] or visited[v2.label]: continue #continuemayebe don't need to check label
+        if visited[v1.id] or visited[v2.id]: continue #continuemayebe don't need to check label
         if (v1.size+v2.size) > maxmyocyte: continue
 
         # MODIFY: We can also check some condition here before merge
@@ -304,9 +324,10 @@ def priorityQueueMerge(L,SAthres=300):
         newvoxel = L[v1.label]
         uniqueIds.add(v1.label)
         for nbr in newvoxel.getAdjList():
+            if visited[nbr.id] or visited[nbr.label]: continue
             edwt,bdsz = boundaryIntensity(newvoxel.boundary, nbr.boundary, Supervoxel.featuremap)
             if bdsz < SAthres: continue
-            heapq.heappush(minqueue,(edwt,(newvoxel,nbr)))
+            minqueue.push(edwt,frozenset((newvoxel,nbr)))
 
         kk+=1
         if saveiteration and ((kk % saveiteration) == 0 ):
@@ -314,7 +335,7 @@ def priorityQueueMerge(L,SAthres=300):
             Supervoxel.writeIntermediateV(uniqueIds, f'{kk}.tif')
             uniqueIds = set([]) #update list
 
-
+    print(kk)
 
 
 def merging(L, iter, threshold, intermediate=False):
