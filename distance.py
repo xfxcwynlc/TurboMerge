@@ -6,6 +6,7 @@ import pickle
 import cc3d
 import math
 import os
+from structure_tensor import eig_special_3d, structure_tensor_3d
 
 # unique priority queue
 class PrioritySet(object):
@@ -306,7 +307,7 @@ def manhattan(x, y, a=20, b=1, c=10):
     return a * abs(x1 - x2)**2 + b * abs(y1 - y2) + c * abs(z1 - z2)
 
 
-def priorityQueueMerge(L,SAthres=100):
+def priorityQueueMerge(L,SAthres=100,totalstep=4000,saveiteration=0):
     '''
 
     :param iter: iteration to stop
@@ -330,7 +331,7 @@ def priorityQueueMerge(L,SAthres=100):
             minqueue.push(edwt,frozenset((L[vid],nbr)))
 
     #Parameters for tuning:
-    totalstep = 4000
+    #totalstep = 4000
     saveiteration = 500
     maxmyocyte = 250000 # 125000 or 250000
     kk = 0
@@ -412,7 +413,6 @@ def priorityQueueMerge(L,SAthres=100):
             else:
                 continue #ignore this segment.
             visited[k] = True
-
 
 
 
@@ -546,9 +546,13 @@ def voxelcoordinates(volume):
             checkNBRs(i)
     return coordinates,boundaries
 
-def saveObj(o,fn):
-    fs = open(fn,'wb')
-    pickle.dump(o,fs)
+def saveObj(o,fn,protocal=False):
+    if not protocal:
+        fs = open(fn,'wb')
+        pickle.dump(o,fs)
+    else:
+        with open(fn,'wb') as fff:
+            pickle.dump(o,fff,pickle.HIGHEST_PROTOCOL)
 
 def loadObj(fn):
     fs = open(fn,'rb')
@@ -627,7 +631,7 @@ if __name__ == "__main__":
     voxelthres = 30
 
     for filename in os.listdir(directory):
-        if not filename.endswith('.tif'): continue
+        if not filename.endswith('031.tif'): continue
         fn = os.path.join(directory,filename)
         print(fn)
         volume = tifffile.imread(fn)
@@ -635,24 +639,31 @@ if __name__ == "__main__":
         stats = cc3d.statistics(volume)  # bounding_boxes, voxel_counts, centroids
         edges = cc3d.region_graph(volume, connectivity=18)
 
-        # construct adjacent matrix
-        Adj = collections.defaultdict(set)
-        for e in edges:
-            if stats['voxel_counts'][e[0]] < voxelthres or stats['voxel_counts'][e[1]] < voxelthres: continue
-            Adj[e[0]].add(e[1])
-            Adj[e[1]].add(e[0])
-
-        coordinates,boundaries = voxelcoordinates(volume)
-
         pickesuffix = filename.replace('.tif','.pickle')
 
-        saveObj(coordinates,"./coods_"+pickesuffix)
-        saveObj(boundaries,"./bounds_"+pickesuffix)
+        if os.path.exists("./coods_"+pickesuffix) and os.path.exists(("./bounds_"+pickesuffix)):
+            coordinates = loadObj("./coods_"+pickesuffix)
+            boundaries = loadObj("./bounds_"+pickesuffix)
+        else:
+            coordinates, boundaries = voxelcoordinates(volume)
+            saveObj(coordinates,"./coods_"+pickesuffix)
+            saveObj(boundaries,"./bounds_"+pickesuffix)
+            print(f'Write coordinates to' + "./coods_"+pickesuffix)
+            print(f'Write boundaries to' + "./bounds_"+pickesuffix)
 
-        print(f'Write coordinates to' + "./coods_"+pickesuffix)
-        print(f'Write boundaries to' + "./bounds_"+pickesuffix)
-        # coordinates = loadObj("./coods_"+pickesuffix)
-        # boundaries = loadObj("./bounds_"+pickesuffix)
+        if os.path.exists("./Adj_"+pickesuffix):
+            Adj = loadObj("./Adj_"+pickesuffix)
+        else:
+            # construct adjacent matrix
+            Adj = collections.defaultdict(set)
+            for e in edges:
+                if stats['voxel_counts'][e[0]] < voxelthres or stats['voxel_counts'][e[1]] < voxelthres: continue
+                Adj[e[0]].add(e[1])
+                Adj[e[1]].add(e[0])
+
+            print(f'Write Adj to' + "./Adj_"+pickesuffix)
+            saveObj(Adj,"./Adj_"+pickesuffix)
+
         N = len(coordinates)
 
         # create supervoxel
@@ -671,12 +682,13 @@ if __name__ == "__main__":
         Supervoxel.rawimage = tifffile.imread(f'/Users/yananw/Desktop/highResolutionMyocytes/{filename}')
         Supervoxel.featuremap = tifffile.imread(f'/Users/yananw/Desktop/featuremap/{filename}')
         oriFN  = "./" + filename.replace('.tif','')+'ori12.npy'
+        #writeOrientation(Supervoxel.rawimage,sigma=2,rho=12,fn=oriFN)
         with open(oriFN,'rb') as ff:
             print(f"Open {oriFN} as orientation file for {filename}")
             Supervoxel.orientation = np.load(ff) #remember it is xyz. need to parse and do zyx!
         #starts merging
         print("Starts Merging...")
-        priorityQueueMerge(SupervoxelList)
+        priorityQueueMerge(SupervoxelList,totalstep=600)
         Supervoxel.writeAll(fna=f'/Users/yananw/Desktop/resultnew/{filename}') #or only visied: ([k for k,v in visited.items() if v])
         # writelabel(volume,[322,118,333,397,399,416])  writelabel(volume, 322)
 
