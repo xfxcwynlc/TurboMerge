@@ -94,7 +94,7 @@ class Supervoxel:
 
     def merge(self, v2):
         '''
-
+        Does my merge allow merging any children voxels?
         :param v2: supervoxel
         :return: Merged supervoxel's IDs exclude mother's id
 
@@ -415,6 +415,87 @@ def priorityQueueMerge(L,SAthres=100,totalstep=4000,saveiteration=0):
             visited[k] = True
 
 
+def mergingCachedBuffer(L):
+    '''
+    :param bsz: 500 Size of cached buffer pairs
+    :return:
+    '''
+
+    SAthres = 50
+    visited = collections.defaultdict(bool) #false default
+    for k in L:
+        visited[k] = False
+
+    #initialize min heap
+    minqueue = PrioritySet()
+    uniqueIds = set([])
+    for vid in visited.keys():
+        for nbr in L[vid].getAdjList():  # Here we can either uses smallest edge weight, or PriorityQueue()
+            if (vid > nbr.id): continue
+            bdpixels = L[vid].boundary.intersection(nbr.boundary)
+            if len(bdpixels) < SAthres: continue
+            edwt = boundaryIntensity(bdpixels, Supervoxel.featuremap)
+            minqueue.push(edwt,frozenset((L[vid],nbr)))
+
+    #Parameters for tuning:
+    #totalstep = 4000
+    bsz = 1000
+    maxmyocyte = 250000 # 125000 or 250000
+    kk = 0
+    normalThresh = 0.3
+    voxelchanged = 0
+    buffer = PrioritySet() # bufferOneround.size() #add a method in priortiy size which takes another set as input
+
+    #Stage: 1 group all supervoxels as a group of 2
+    # Check what happends when not using surface area and edge weight.
+    while minqueue.size()>0:
+        kk+=1
+        edwt,pair = minqueue.pop() #visit one voxel each time
+        v1,v2 = pair[0],pair[1] #unpack supervoxel
+        if visited[v1.id] or visited[v2.id]: continue #continuemayebe don't need to check label
+        #if edwt > 0.55: continue
+        ids = v1.merge(v2)
+        voxelchanged+=1
+
+        # mark mother as visited
+        visited[v1.label] = True
+        for i in ids:
+            visited[i] = True
+
+        newvoxel = Supervoxel.allvoxels[v1.label]
+        uniqueIds.add(v1.label)
+
+        #Add candiadtes to buffer
+        for nbr in newvoxel.getAdjList():
+            #if visited[nbr.id] or visited[nbr.label]: continue
+            bdpixels = newvoxel.boundary.intersection(nbr.boundary)
+            #if len(bdpixels) < SAthres: continue
+            edwt = boundaryIntensity(bdpixels, Supervoxel.featuremap)
+            #buffer.push(edwt,frozenset((newvoxel,nbr)))
+
+        # if buffer.size()%bsz==0 or voxelchanged==100:
+        #     #add the buffer contents to minqueue.
+        #     print(voxelchanged)
+        #     Supervoxel.writeIntermediateV(uniqueIds,'analysis/buffer.tif')
+
+    # Group the rest/unvisited supervoxels based on largest SA among its nbrs.//smallest orientation
+    unvisitedids = [vid for vid in visited.keys() if not visited[vid]]
+    for vid in unvisitedids:
+        maxct = 0
+        maxNbr = None
+        for nbr in L[vid].getAdjList():  # Here we can either uses smallest edge weight, or PriorityQueue()
+            bdpixels = L[vid].boundary.intersection(nbr.boundary)
+            maxct = max(maxct,len(bdpixels))
+            if maxct == len(bdpixels):
+                maxNbr = nbr
+        if maxNbr:
+            L[vid].merge(maxNbr)
+            visited[vid] = True
+            uniqueIds.add(L[vid].label)
+
+    print( [vid for vid in visited.keys() if not visited[vid]])
+    Supervoxel.writeIntermediateV(uniqueIds,'analysis/newAllvisit.tif')
+
 
 
 
@@ -628,7 +709,7 @@ def writeOrientation(img, sigma=3, rho = 80, gap = 10, fn = './orien.tif', write
 if __name__ == "__main__":
 
     directory = "/Users/yananw/Desktop/supervoxels"
-    voxelthres = 30
+    voxelthres = 5
 
     for filename in os.listdir(directory):
         if not filename.endswith('031.tif'): continue
@@ -688,7 +769,8 @@ if __name__ == "__main__":
             Supervoxel.orientation = np.load(ff) #remember it is xyz. need to parse and do zyx!
         #starts merging
         print("Starts Merging...")
-        priorityQueueMerge(SupervoxelList,totalstep=600)
+        #priorityQueueMerge(SupervoxelList,totalstep=600)
+        mergingCachedBuffer(SupervoxelList)
         Supervoxel.writeAll(fna=f'/Users/yananw/Desktop/resultnew/{filename}') #or only visied: ([k for k,v in visited.items() if v])
         # writelabel(volume,[322,118,333,397,399,416])  writelabel(volume, 322)
 
