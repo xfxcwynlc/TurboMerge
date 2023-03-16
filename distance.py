@@ -415,7 +415,7 @@ def priorityQueueMerge(L,SAthres=100,totalstep=4000,saveiteration=0):
             visited[k] = True
 
 
-def mergingCachedBuffer(L):
+def mergingCachedBufferStage1(L):
     '''
     :param bsz: 500 Size of cached buffer pairs
     :return:
@@ -445,14 +445,50 @@ def mergingCachedBuffer(L):
     normalThresh = 0.3
     voxelchanged = 0
     buffer = PrioritySet() # bufferOneround.size() #add a method in priortiy size which takes another set as input
-
     #Stage: 1 group all supervoxels as a group of 2
     # Check what happends when not using surface area and edge weight.
     while minqueue.size()>0:
-        kk+=1
         edwt,pair = minqueue.pop() #visit one voxel each time
         v1,v2 = pair[0],pair[1] #unpack supervoxel
-        if visited[v1.id] or visited[v2.id]: continue #continuemayebe don't need to check label
+        #Repeat Stage 1 merging, now replace unvisited turbo with new grown units
+        if minqueue.size() == 0:
+            kk += 1  #flag to count
+            # Group the rest/unvisited supervoxels based on largest SA among its nbrs.//smallest orientation
+            unvisitedids = [vid for vid in visited.keys() if not visited[vid]]
+            for vid in unvisitedids:
+                maxct = 0
+                maxNbr = None
+                for nbr in L[vid].getAdjList():  # Here we can either uses smallest edge weight, or PriorityQueue()
+                    bdpixels = L[vid].boundary.intersection(nbr.boundary)
+                    maxct = max(maxct, len(bdpixels))
+                    if maxct == len(bdpixels):
+                        maxNbr = nbr
+                if maxNbr:
+                    voxelchanged += 1
+                    L[vid].merge(maxNbr)
+                    visited[vid] = True
+                    uniqueIds.add(L[vid].label) # to be considered in the next round
+
+            print(f'{voxelchanged} voxels have changed at: {kk}, below is unvisited:')
+            print([vid for vid in visited.keys() if not visited[vid]])
+            Supervoxel.writeIntermediateV(uniqueIds, f'analysis/newAllvisit{kk}.tif')
+
+            if kk==2: break
+            #Push to minqueue:
+            SAthres = 2*SAthres
+            for vid in uniqueIds:
+                for nbr in L[vid].getAdjList():
+                    if (vid > nbr.id): continue
+                    bdpixels = L[vid].boundary.intersection(nbr.boundary)
+                    if len(bdpixels) < SAthres: continue
+                    edwt = boundaryIntensity(bdpixels, Supervoxel.featuremap)
+                    minqueue.push(edwt, frozenset((L[vid].mother, nbr)))
+                visited[L[vid].label] = False
+            uniqueIds = set([])
+            voxelchanged = 0
+            continue
+        if visited[v1.id] or visited[v2.id]: continue  #continuemayebe don't need to check label
+
         #if edwt > 0.55: continue
         ids = v1.merge(v2)
         voxelchanged+=1
@@ -473,30 +509,76 @@ def mergingCachedBuffer(L):
             edwt = boundaryIntensity(bdpixels, Supervoxel.featuremap)
             #buffer.push(edwt,frozenset((newvoxel,nbr)))
 
+
         # if buffer.size()%bsz==0 or voxelchanged==100:
         #     #add the buffer contents to minqueue.
         #     print(voxelchanged)
         #     Supervoxel.writeIntermediateV(uniqueIds,'analysis/buffer.tif')
 
-    # Group the rest/unvisited supervoxels based on largest SA among its nbrs.//smallest orientation
-    unvisitedids = [vid for vid in visited.keys() if not visited[vid]]
-    for vid in unvisitedids:
-        maxct = 0
-        maxNbr = None
-        for nbr in L[vid].getAdjList():  # Here we can either uses smallest edge weight, or PriorityQueue()
+    return uniqueIds
+
+#Complete merging in Stage 2
+#Take orientations into account
+#non-iterative merging until nothing added to minqueue
+#To improve:
+#ADD A SURFACE NORMAL METHOD WHICH TAKES 2 SUPERVOXELS DIRECTLY!
+#Use saved staged1 tiff as a starting point, speeding things up!
+def mergingCachedBufferStage2(uniqueIds, L):
+    visited = dict()
+    minqueue = PrioritySet()
+    for k in L:
+        visited[k] = True
+
+    #reinitialze queue
+    for vid in uniqueIds:
+        visited[vid] = False #add to unvisited
+        #Construct minqueue based on intensity stains
+        for nbr in L[vid].getAdjList():
+            if (vid>nbr.label): continue
             bdpixels = L[vid].boundary.intersection(nbr.boundary)
-            maxct = max(maxct,len(bdpixels))
-            if maxct == len(bdpixels):
-                maxNbr = nbr
-        if maxNbr:
-            L[vid].merge(maxNbr)
-            visited[vid] = True
-            uniqueIds.add(L[vid].label)
+            edwt = boundaryIntensity(bdpixels,Supervoxel.featuremap)
 
-    print( [vid for vid in visited.keys() if not visited[vid]])
-    Supervoxel.writeIntermediateV(uniqueIds,'analysis/newAllvisit.tif')
+            # if normwt > 0.3: continue
+            if edwt > 0.5: continue
+            if len(bdpixels) < 300: continue
 
+            minqueue.push(edwt,frozenset((L[vid].mother,nbr)))
 
+    #while queue is non-empty:
+    voxelchange = 0
+    while minqueue.size()>0:
+        edwt,pair = minqueue.pop()
+        v1,v2 = pair[0],pair[1]
+        if v1.label == v2.label: continue
+        #if visited[v1.id] or visited[v2.id]: continue
+        bdpixels = v1.boundary.intersection(v2.boundary)
+        #calculate normalsurface weight
+        ori1 = np.flip(Supervoxel.orientation[:, L[vid].centroid[0], L[vid].centroid[1], L[vid].centroid[2]])
+        ori2 = np.flip(Supervoxel.orientation[:, nbr.centroid[0], nbr.centroid[1], nbr.centroid[2]])
+
+        normwt = surfaceNormal(bdpixels, ori1, ori2)
+
+        if normwt > 0.4: continue
+
+        ids = v1.merge(v2)
+        for i in ids:
+            visited[i] = True
+
+        newvoxel = L[v1.label]
+        uniqueIds.add(v1.label)
+        #consider merged supervoxels with it's neighbours
+        for nbr in newvoxel.getAdjList():
+            if visited[nbr.id] or visited[nbr.label]: continue
+            bdpixels = newvoxel.boundary.intersection(nbr.boundary)
+            #check surface area
+            if len(bdpixels) < 400: continue
+            #check edgeweight constraint
+            edwt = boundaryIntensity(bdpixels,Supervoxel.featuremap)
+            if edwt > 0.55: continue
+            minqueue.push(edwt,frozenset((newvoxel.mother,nbr)))
+        voxelchange += 1
+
+    print(voxelchange)
 
 
 def merging(L, iter, threshold, intermediate=False):
@@ -770,7 +852,8 @@ if __name__ == "__main__":
         #starts merging
         print("Starts Merging...")
         #priorityQueueMerge(SupervoxelList,totalstep=600)
-        mergingCachedBuffer(SupervoxelList)
-        Supervoxel.writeAll(fna=f'/Users/yananw/Desktop/resultnew/{filename}') #or only visied: ([k for k,v in visited.items() if v])
+        uniqueids = mergingCachedBufferStage1(SupervoxelList)
+        mergingCachedBufferStage2(uniqueids, SupervoxelList)
+        Supervoxel.writeAll(fna=f'./analysis/stage2.tif') #or only visied: ([k for k,v in visited.items() if v])
         # writelabel(volume,[322,118,333,397,399,416])  writelabel(volume, 322)
 
