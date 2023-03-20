@@ -54,9 +54,9 @@ class Supervoxel:
         v = np.zeros(Supervoxel.shape,dtype=np.int32)
         for l in labeltowrite:
             for idx in Supervoxel.allvoxels[l].getCoods():
-                v[idx] = l
+                v[idx] = Supervoxel.allvoxels[l].label
             for idx in Supervoxel.allvoxels[l].boundary:
-                v[idx] = l
+                v[idx] = Supervoxel.allvoxels[l].label
         tifffile.imwrite(fn,v,photometric='minisblack')
 
     @classmethod
@@ -451,21 +451,21 @@ def mergingCachedBufferStage1(L):
         edwt,pair = minqueue.pop() #visit one voxel each time
         v1,v2 = pair[0],pair[1] #unpack supervoxel
         #Repeat Stage 1 merging, now replace unvisited turbo with new grown units
-        if (v1.label ==4380 or v1.label==4689 or v1.label==4614 or v1.label==4870) and kk==1:
-            print("possible error")
-
 
         if minqueue.size() == 0:
             kk += 1  #flag to count
             # Group the rest/unvisited supervoxels based on largest SA among its nbrs.//smallest orientation
+            # Should still prevent the edge weight etc.
             unvisitedids = [vid for vid in visited.keys() if not visited[vid]]
             for vid in unvisitedids:
                 maxct = 0
                 maxNbr = None
                 for nbr in L[vid].getAdjList():  # Here we can either uses smallest edge weight, or PriorityQueue()
-                    if nbr.label == 4380:
-                        print('possible error')
+                    # if (nbr.label == 4380 and vid == 4614) or (nbr.label == 4614 and vid == 4380) :
+                    #     print('possible error')
                     bdpixels = L[vid].boundary.intersection(nbr.boundary)
+                    edwt = boundaryIntensity(bdpixels,Supervoxel.featuremap)
+                    if edwt>0.5: continue
                     maxct = max(maxct, len(bdpixels))
                     if maxct == len(bdpixels):
                         maxNbr = nbr
@@ -477,7 +477,7 @@ def mergingCachedBufferStage1(L):
 
             print(f'{voxelchanged} voxels have changed at: {kk}, below is unvisited:')
             print([vid for vid in visited.keys() if not visited[vid]])
-            #Supervoxel.writeIntermediateV(uniqueIds, f'analysis/newAllvisit{kk}.tif')
+            Supervoxel.writeIntermediateV(uniqueIds, f'analysis/SA_newAllvisit{kk}.tif')
 
             if kk==2: break
             #Push to minqueue:
@@ -487,7 +487,7 @@ def mergingCachedBufferStage1(L):
                     if (vid > nbr.id): continue
                     bdpixels = L[vid].boundary.intersection(nbr.boundary)
                     if len(bdpixels) < SAthres: continue
-                    if (L[vid].label == 4380 and nbr.label == 4689) or nbr.label==4380:
+                    if (L[vid].label == 4614 and nbr.label == 4380) or nbr.label==4380:
                         print("possible errors")
 
                     edwt = boundaryIntensity(bdpixels, Supervoxel.featuremap)
@@ -865,6 +865,6 @@ if __name__ == "__main__":
         #priorityQueueMerge(SupervoxelList,totalstep=600)
         uniqueids = mergingCachedBufferStage1(SupervoxelList)
        # mergingCachedBufferStage2(uniqueids, SupervoxelList)
-        Supervoxel.writeAll(fna=f'./analysis/stage2.tif') #or only visied: ([k for k,v in visited.items() if v])
+        #Supervoxel.writeAll(fna=f'./analysis/stage2.tif') #or only visied: ([k for k,v in visited.items() if v])
         # writelabel(volume,[322,118,333,397,399,416])  writelabel(volume, 322)
 
