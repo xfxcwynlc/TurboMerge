@@ -421,7 +421,7 @@ def mergingCachedBufferStage1(L):
     :return:
     '''
 
-    SAthres = 50
+    SAthres = 60
     visited = collections.defaultdict(bool) #false default
     for k in L:
         visited[k] = False
@@ -435,6 +435,7 @@ def mergingCachedBufferStage1(L):
             bdpixels = L[vid].boundary.intersection(nbr.boundary)
             if len(bdpixels) < SAthres: continue
             edwt = boundaryIntensity(bdpixels, Supervoxel.featuremap)
+            if edwt>0.5: continue
             minqueue.push(edwt,frozenset((L[vid],nbr)))
 
     #Parameters for tuning:
@@ -451,6 +452,10 @@ def mergingCachedBufferStage1(L):
         edwt,pair = minqueue.pop() #visit one voxel each time
         v1,v2 = pair[0],pair[1] #unpack supervoxel
         #Repeat Stage 1 merging, now replace unvisited turbo with new grown units
+        if kk==1:
+            if (v1.label == 3242 and v2.label == 3922) or (v1.label == 3922 and v2.label == 3242):
+                print('error ')
+
 
         if minqueue.size() == 0:
             kk += 1  #flag to count
@@ -461,8 +466,6 @@ def mergingCachedBufferStage1(L):
                 maxct = 0
                 maxNbr = None
                 for nbr in L[vid].getAdjList():  # Here we can either uses smallest edge weight, or PriorityQueue()
-                    # if (nbr.label == 4380 and vid == 4614) or (nbr.label == 4614 and vid == 4380) :
-                    #     print('possible error')
                     bdpixels = L[vid].boundary.intersection(nbr.boundary)
                     edwt = boundaryIntensity(bdpixels,Supervoxel.featuremap)
                     if edwt>0.5: continue
@@ -487,10 +490,8 @@ def mergingCachedBufferStage1(L):
                     if (vid > nbr.id): continue
                     bdpixels = L[vid].boundary.intersection(nbr.boundary)
                     if len(bdpixels) < SAthres: continue
-                    if (L[vid].label == 4614 and nbr.label == 4380) or nbr.label==4380:
-                        print("possible errors")
-
                     edwt = boundaryIntensity(bdpixels, Supervoxel.featuremap)
+                    if edwt>0.4: continue
                     minqueue.push(edwt, frozenset((L[vid].mother, nbr)))
                 visited[L[vid].label] = False
             uniqueIds = set([])
@@ -510,13 +511,13 @@ def mergingCachedBufferStage1(L):
         newvoxel = Supervoxel.allvoxels[v1.label]
         uniqueIds.add(v1.label)
 
-        #Add candiadtes to buffer
-        for nbr in newvoxel.getAdjList():
-            #if visited[nbr.id] or visited[nbr.label]: continue
-            bdpixels = newvoxel.boundary.intersection(nbr.boundary)
-            #if len(bdpixels) < SAthres: continue
-            edwt = boundaryIntensity(bdpixels, Supervoxel.featuremap)
-            #buffer.push(edwt,frozenset((newvoxel,nbr)))
+        # #Add candiadtes to buffer
+        # for nbr in newvoxel.getAdjList():
+        #     #if visited[nbr.id] or visited[nbr.label]: continue
+        #     bdpixels = newvoxel.boundary.intersection(nbr.boundary)
+        #     #if len(bdpixels) < SAthres: continue
+        #     edwt = boundaryIntensity(bdpixels, Supervoxel.featuremap)
+        #     #buffer.push(edwt,frozenset((newvoxel,nbr)))
 
 
         # if buffer.size()%bsz==0 or voxelchanged==100:
