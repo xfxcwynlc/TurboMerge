@@ -415,7 +415,7 @@ def priorityQueueMerge(L,SAthres=100,totalstep=4000,saveiteration=0):
             visited[k] = True
 
 
-def mergingCachedBufferStage1(L):
+def mergingCachedBufferStage1(L,fn='.tif'):
     '''
     :param bsz: 500 Size of cached buffer pairs
     :return:
@@ -480,7 +480,7 @@ def mergingCachedBufferStage1(L):
 
             print(f'{voxelchanged} voxels have changed at: {kk}, below is unvisited:')
             print([vid for vid in visited.keys() if not visited[vid]])
-            #Supervoxel.writeIntermediateV(uniqueIds, f'analysis/SA_newAllvisit{kk}.tif')
+            Supervoxel.writeIntermediateV(uniqueIds, f'analysis2/SA_newAllvisit{kk}_{fn}')
 
             if kk==2: break
             #Push to minqueue:
@@ -537,7 +537,7 @@ def mergingCachedBufferStage1(L):
 #ADD A SURFACE NORMAL METHOD WHICH TAKES 2 SUPERVOXELS DIRECTLY!
 #Use saved staged1 tiff as a starting point, speeding things up!
 #Cached buffer can be used for check unvisited turbovoxels at a stage
-def mergingCachedBufferStage2(uniqueIds, L):
+def mergingCachedBufferStage2(uniqueIds, L,fn='.tif'):
     visited = dict()
     minqueue = PrioritySet()
     for k in L:
@@ -590,7 +590,7 @@ def mergingCachedBufferStage2(uniqueIds, L):
         voxelchange += 1
 
     print(voxelchange)
-    Supervoxel.writeIntermediateV(uniqueIds,'./analysis/stage2_edwttight04.tif')
+    Supervoxel.writeIntermediateV(uniqueIds,f'./analysis2/stage204{fn}')
 
 
 def merging(L, iter, threshold, intermediate=False):
@@ -806,17 +806,25 @@ if __name__ == "__main__":
     voxelthres = 5
 
     for filename in os.listdir(directory):
-        if not filename.endswith('031.tif'): continue
+        if not filename.endswith('014.tif'): continue
         fn = os.path.join(directory,filename)
         print(fn)
         volume = tifffile.imread(fn)
-        print(f"Processing file: {fn}")
+
+        maskoutfn = os.path.join(directory, filename.replace('.tif', '_zero.tif'))
+        if os.path.exists(maskoutfn):
+            m = (tifffile.imread(maskoutfn).astype(np.int32)-1)*(-1)
+            volume = m * volume
+            print(f"Processing with maskoutfn: {maskoutfn}" )
+
+        print(f"Processing file: {fn} ")
+
         stats = cc3d.statistics(volume)  # bounding_boxes, voxel_counts, centroids
         edges = cc3d.region_graph(volume, connectivity=18)
 
         pickesuffix = filename.replace('.tif','.pickle')
 
-        if os.path.exists("./coods_"+pickesuffix) and os.path.exists(("./bounds_"+pickesuffix)):
+        if not os.path.exists("./coods_"+pickesuffix) and os.path.exists(("./bounds_"+pickesuffix)):
             coordinates = loadObj("./coods_"+pickesuffix)
             boundaries = loadObj("./bounds_"+pickesuffix)
         else:
@@ -826,7 +834,7 @@ if __name__ == "__main__":
             print(f'Write coordinates to' + "./coods_"+pickesuffix)
             print(f'Write boundaries to' + "./bounds_"+pickesuffix)
 
-        if os.path.exists("./Adj_"+pickesuffix):
+        if not os.path.exists("./Adj_"+pickesuffix):
             Adj = loadObj("./Adj_"+pickesuffix)
         else:
             # construct adjacent matrix
@@ -864,8 +872,8 @@ if __name__ == "__main__":
         #starts merging
         print("Starts Merging...")
         #priorityQueueMerge(SupervoxelList,totalstep=600)
-        uniqueids = mergingCachedBufferStage1(SupervoxelList)
-        mergingCachedBufferStage2(uniqueids, SupervoxelList)
+        uniqueids = mergingCachedBufferStage1(SupervoxelList,fn=filename)
+        mergingCachedBufferStage2(uniqueids, SupervoxelList,fn=filename)
         #Supervoxel.writeAll(fna=f'./analysis/stage2.tif') #or only visied: ([k for k,v in visited.items() if v])
         # writelabel(volume,[322,118,333,397,399,416])  writelabel(volume, 322)
 
