@@ -810,13 +810,6 @@ if __name__ == "__main__":
         fn = os.path.join(directory,filename)
         print(fn)
         volume = tifffile.imread(fn)
-
-        maskoutfn = os.path.join(directory, filename.replace('.tif', '_zero.tif'))
-        if os.path.exists(maskoutfn):
-            m = (tifffile.imread(maskoutfn).astype(np.int32)-1)*(-1)
-            volume = m * volume
-            print(f"Processing with maskoutfn: {maskoutfn}" )
-
         print(f"Processing file: {fn} ")
 
         stats = cc3d.statistics(volume)  # bounding_boxes, voxel_counts, centroids
