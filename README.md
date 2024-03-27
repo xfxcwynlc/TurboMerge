@@ -19,11 +19,11 @@ Abstract data which records turbovoxel's attributes :
 7. self ID
 8. self label
 9. Adjacent neighbours of this object
-...
+
 
 self methods:
 ------
-..
+
 
 class methods:
 ------
